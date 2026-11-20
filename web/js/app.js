@@ -1594,20 +1594,30 @@ function renderResult() {
   if (selfJudged) badges.push(`<span class="badge-pill">✍️ 含 ${selfJudged} 题自评</span>`);
 
   const review = qs
-    .filter((x) => !x.a.correct || x.a.skipped)
-    .map(({ a, q }) => `
-      <div class="review-item">
+    .map(({ a, q }, i) => {
+      const ok = !a.skipped && a.correct;
+      const mark = a.skipped ? '»' : ok ? '✓' : '✗';
+      const cls = a.skipped ? 'skip' : ok ? 'ok' : 'bad';
+      const showExplain = !ok;
+      return `
+      <div class="review-item ${cls}">
         <div class="review-head">
-          <span class="mark${a.correct ? ' ok' : ''}">${a.correct ? '✓' : '✗'}</span>
-          <span>${richText(q.stem)}</span>
+          <span class="mark ${cls}">${mark}</span>
+          <span class="review-no">${String(i + 1).padStart(2, '0')}</span>
+          <span class="review-stem">${stemText(q.stem)}</span>
+          <span class="pill sm">${a.skipped ? '跳过' : ok ? '正确' : '错误'}</span>
         </div>
         <div class="review-body">
-          你的答案：<span class="mine">${esc(a.skipped ? '（跳过看答案）' : chosenTextOf(q, a.chosen))}</span><br>
-          正确答案：<span class="ans">${esc(answerTextOf(q))}</span>
-          ${q.explain ? `<div class="exp">${richText(q.explain)}</div>` : ''}
-          ${q.note ? `<div class="exp" style="color:#9a6a00">📌 勘误：${richText(q.note)}</div>` : ''}
+          ${ok
+            ? `正确答案：<span class="ans">${esc(answerTextOf(q))}</span>`
+            : `你的答案：<span class="mine">${esc(a.skipped ? '（跳过看答案）' : chosenTextOf(q, a.chosen))}</span>
+          <span class="sep">·</span>
+          正确答案：<span class="ans">${esc(answerTextOf(q))}</span>`}
+          ${showExplain && q.explain ? `<div class="exp">${richText(q.explain)}</div>` : ''}
+          ${showExplain && q.note ? `<div class="exp" style="color:#9a6a00">📌 勘误：${richText(q.note)}</div>` : ''}
         </div>
-      </div>`)
+      </div>`;
+    })
     .join('');
 
   view.innerHTML = `
@@ -1661,8 +1671,8 @@ function renderResult() {
     </div>
 
     <div class="result-detail">
-      <h3>本卷回顾 <span class="pill">${qs.length - (attempt.wrong + (attempt.skipped || 0))} / ${qs.length} 正确</span></h3>
-      ${review || '<div class="empty">全部答对，太强了！去挑战更高难度吧。</div>'}
+      <h3>本卷题目 <span class="pill">正确 ${attempt.correct} / ${qs.length}</span><span class="hint" style="margin-left:8px;font-size:12px">按抽题顺序 · 点「再来一份」换一套</span></h3>
+      ${review || '<div class="empty">这一卷没有题目记录。</div>'}
     </div>
   </div>`;
 
@@ -1824,176 +1834,6 @@ function startWrongPaper(questions, code, tag = '') {
 /* ======================================================================
  *  战绩
  * ==================================================================== */
-const qbankView = { subject: 'all', status: 'all', keyword: '' };
-const QBANK_STATUS = {
-  all: '全部',
-  new: '未做',
-  correct: '答对',
-  wrong: '答错',
-};
-
-/** 汇总每道题的最新作答状态：新→旧扫描 attempts，错题本兜底 */
-function questionStatusMap() {
-  const map = new Map();
-  const attempts = (state.attempts || [])
-    .slice()
-    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
-  for (const a of attempts) {
-    for (const ans of a.answers || []) {
-      if (!ans || !ans.qid || ans.skipped) continue;
-      const prev = map.get(ans.qid);
-      if (prev && prev.at && prev.at >= String(a.createdAt || '')) continue;
-      map.set(ans.qid, { status: ans.correct ? 'correct' : 'wrong', at: a.createdAt || '', chosen: ans.chosen });
-    }
-  }
-  for (const w of Object.values(state.wrong || {})) {
-    if (!w || !w.qid) continue;
-    const prev = map.get(w.qid);
-    if (!prev || !prev.at || String(w.at || '') >= prev.at) {
-      map.set(w.qid, { status: 'wrong', at: w.at || '', chosen: w.chosen });
-    }
-  }
-  return map;
-}
-
-function allQuestions() {
-  const out = [];
-  for (const m of state.index?.subjects || []) {
-    const subj = state.bank?.subjects?.[m.code];
-    if (!subj) continue;
-    for (const q of subj.questions || []) out.push({ q, subj });
-  }
-  return out;
-}
-
-function renderQbank() {
-  const host = $('#qbank');
-  if (!host) return;
-  try {
-    paintQbank(host);
-  } catch (err) {
-    host.innerHTML = `<div class="empty">题目总览加载失败：${esc(String(err && err.message ? err.message : err))}</div>`;
-    console.error('[qbank]', err);
-  }
-}
-
-function paintQbank(host) {
-  const statusMap = questionStatusMap();
-  const all = allQuestions();
-  const kw = qbankView.keyword.trim().toLowerCase();
-
-  const countBy = { all: all.length, new: 0, correct: 0, wrong: 0 };
-  for (const { q } of all) {
-    const st = statusMap.get(q.id)?.status || 'new';
-    countBy[st] += 1;
-  }
-
-  const filtered = all.filter(({ q, subj }) => {
-    if (qbankView.subject !== 'all' && subj.code !== qbankView.subject) return false;
-    const st = statusMap.get(q.id)?.status || 'new';
-    if (qbankView.status !== 'all' && st !== qbankView.status) return false;
-    if (kw && !`${q.stem} ${q.options ? Object.values(q.options).join(' ') : ''}`.toLowerCase().includes(kw)) return false;
-    return true;
-  });
-
-  const subjectFilters = [
-    `<button class="${qbankView.subject === 'all' ? 'active' : ''}" data-qs="all">全部 <b>${all.length}</b></button>`,
-    ...(state.index?.subjects || []).map(
-      (m) => `<button class="${qbankView.subject === m.code ? 'active' : ''}" data-qs="${m.code}">${m.code} <b>${m.total}</b></button>`
-    ),
-  ].join('');
-
-  const statusFilters = Object.entries(QBANK_STATUS)
-    .map(
-      ([k, label]) =>
-        `<button class="${qbankView.status === k ? 'active' : ''}" data-qst="${k}">${label} <b>${countBy[k] ?? 0}</b></button>`
-    )
-    .join('');
-
-  const rows = filtered
-    .map(({ q }) => {
-      const st = statusMap.get(q.id)?.status || 'new';
-      const label = st === 'correct' ? '答对' : st === 'wrong' ? '答错' : '未做';
-      return `<button class="qbank-row ${st}" data-qid="${esc(q.id)}">
-        <span class="qbank-type t-${q.type}">${{ fill: '填空', single: '选择', judge: '判断' }[q.type] || q.type}</span>
-        <span class="qbank-stem">${stemText(q.stem)}</span>
-        <span class="qbank-badge ${st}">${label}</span>
-      </button>`;
-    })
-    .join('');
-
-  host.innerHTML = `
-    <div class="qbank-head">
-      <div>
-        <span class="hint qbank-count">共 ${all.length} 题 · 已练 ${countBy.correct + countBy.wrong} 题 · 点任意题看答案与解析</span>
-      </div>
-      <label class="qbank-search">
-        <span>🔍</span>
-        <input id="qbank-kw" type="search" placeholder="搜索题干或选项关键词" value="${esc(qbankView.keyword)}" />
-      </label>
-    </div>
-    <div class="qbank-filters">
-      <div class="seg">${subjectFilters}</div>
-      <div class="seg">${statusFilters}</div>
-    </div>
-    <div class="qbank-list">${rows || '<div class="empty">没有符合条件的题目。</div>'}</div>`;
-
-  host.querySelectorAll('[data-qs]').forEach((b) =>
-    b.addEventListener('click', () => {
-      qbankView.subject = b.dataset.qs;
-      renderQbank();
-    })
-  );
-  host.querySelectorAll('[data-qst]').forEach((b) =>
-    b.addEventListener('click', () => {
-      qbankView.status = b.dataset.qst;
-      renderQbank();
-    })
-  );
-  host.querySelectorAll('[data-qid]').forEach((b) =>
-    b.addEventListener('click', () => {
-      const q = state.qmap.get(b.dataset.qid);
-      if (q) openQuestionCard(q, statusMap.get(q.id));
-    })
-  );
-  const kwInput = $('#qbank-kw');
-  if (kwInput) {
-    let timer = 0;
-    kwInput.addEventListener('input', () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        qbankView.keyword = kwInput.value;
-        renderQbank();
-      }, 220);
-    });
-  }
-}
-
-function openQuestionCard(q, st) {
-  const your = st?.chosen;
-  const opts = q.options
-    ? Object.entries(q.options)
-        .map(
-          ([k, v]) => `<li class="${q.answer === k ? 'ok' : ''}">
-            <b>${k}</b><span>${richText(v)}</span>${q.answer === k ? '<em>正确答案</em>' : ''}
-          </li>`
-        )
-        .join('')
-    : '';
-  openModal(`
-    <h3 class="modal-title">${q.no ? `原题号 ${esc(String(q.no))} · ` : ''}${esc(q.id)}</h3>
-    <div class="modal-desc">${stemText(q.stem)}</div>
-    ${opts ? `<ul class="qbank-options">${opts}</ul>` : ''}
-    <div class="qbank-answer">
-      <div>正确答案：<b class="ok">${esc(answerTextOf(q))}</b></div>
-      ${your !== undefined && your !== null ? `<div>你的答案：<b class="bad">${esc(chosenTextOf(q, your))}</b></div>` : ''}
-    </div>
-    ${q.explain ? `<div class="qbank-explain">${richText(q.explain)}</div>` : ''}
-    ${q.note ? `<div class="qbank-note">📌 ${richText(q.note)}</div>` : ''}
-    <div class="modal-actions"><button class="btn ghost" data-x="0">关闭</button></div>
-  `);
-}
-
 function renderStats() {
   const view = $('#view-stats');
   const p = state.profile || computeStats(state.attempts, state.wrong);
@@ -2059,9 +1899,6 @@ function renderStats() {
   <div class="section-head"><h2>分科进度</h2></div>
   <div class="subject-grid">${subjects}</div>
 
-  <div class="section-head"><h2>题目总览</h2><span class="hint">按科目 / 作答状态筛选，或用关键词搜索</span></div>
-  <div id="qbank" class="panel qbank"></div>
-
   <div class="section-head"><h2>练习记录</h2><span class="hint">最近 40 卷 · 点击查看结算</span></div>
   ${
     rows
@@ -2080,7 +1917,6 @@ function renderStats() {
     });
   });
 
-  renderQbank();
 }
 
 /* ======================================================================

@@ -41,15 +41,29 @@
 }
 
 /* ---------- 底子 ---------- */
+/* 背景复用 1551114.xyz 的站点背景：固定 cover 图 + 90% 浅色遮罩，竖屏换竖版图 */
 body {
-  background: var(--bg);
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(rgba(232, 232, 240, 0.9), rgba(232, 232, 240, 0.9)),
+    url("https://1551114.xyz/img/1BFD58E7C285DF78F1035566CB4B3FC3.png");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-attachment: fixed;
   color: var(--ink);
 }
 
+@media (orientation: portrait) {
+  body {
+    background-image:
+      linear-gradient(rgba(232, 232, 240, 0.9), rgba(232, 232, 240, 0.9)),
+      url("https://1551114.xyz/img/CA9576EA01A924898B3993A63E2BD25B.jpg");
+  }
+}
+
 .bg-deco {
-  background:
-    radial-gradient(1200px 820px at 50% -14%, #eef1f7 0%, rgba(238, 241, 247, 0) 62%),
-    var(--bg);
+  background: transparent;
 }
 
 .bg-deco::after {
@@ -959,3 +973,45 @@ body {
 /* ---------- 错题本 · 掌握状态（新拟态） ---------- */
 .w-badge.bad { background: #f7e4e7; color: #b33547; }
 .w-badge.ok { background: #e4f2ea; color: #1f7a54; }
+
+/* ---------- 结算回顾：逐题结果 ---------- */
+.review-item {
+  border-top: 1px solid rgba(163, 177, 198, 0.28);
+  padding: 12px 2px;
+}
+.review-item:first-of-type { border-top: 0; }
+.review-head { align-items: center; }
+.review-head .mark,
+.review-head .mark.ok,
+.review-head .mark.bad,
+.review-head .mark.skip {
+  background: var(--bg);
+  color: var(--ink-2);
+  box-shadow: var(--shadow-in-sm);
+}
+.review-head .mark.ok { color: #1f7a54; }
+.review-head .mark.bad { color: #b33547; }
+.review-head .mark.skip { color: #8a5a00; }
+.review-no {
+  flex: none;
+  font-style: italic;
+  font-weight: 900;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+.review-stem { flex: 1; min-width: 0; }
+.review-head .pill.sm {
+  flex: none;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: var(--shadow-in-sm);
+  color: var(--muted);
+}
+.review-item.ok .review-head .pill.sm { color: #1f7a54; }
+.review-item.bad .review-head .pill.sm { color: #b33547; }
+.review-item.skip .review-head .pill.sm { color: #8a5a00; }
+.review-body { margin-left: 36px; }
+.review-body .sep { color: var(--muted); margin: 0 4px; }
