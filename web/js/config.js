@@ -14,7 +14,8 @@
  */
 const params = new URLSearchParams(location.search);
 const isLocalDev = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname);
-const isApiHost = /(^|\.)1551114\.xyz$/i.test(location.hostname);
+/* 后端自己托管的域名（quiz.1551114.xyz）：同源即可 */
+const isApiHost = location.hostname.toLowerCase().startsWith('quiz.');
 const forceOff = params.get('noserver') === '1' || params.get('server') === '0';
 
 /** 线上后端（独立部署在 server7，nginx + systemd） */
@@ -22,6 +23,7 @@ const API_ORIGIN = 'https://quiz.1551114.xyz';
 
 window.APP_CONFIG = {
   // 后端 API 根地址；留空 = 与页面同源（本机开发、或由 server 同时托管 web 与 bank）
+  // 其他静态托管（GitHub Pages、1551114.xyz/quiz/ 等）一律指向线上 API
   apiBase: isLocalDev || isApiHost ? '' : API_ORIGIN,
 
   // 题库根地址；留空 = 页面同级的 ./bank/

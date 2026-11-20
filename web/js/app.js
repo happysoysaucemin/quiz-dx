@@ -20,6 +20,8 @@ const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const richText = (s) =>
   esc(s).replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/_{3,}/g, '<span class="blank"></span>');
+/* 紧凑列表用：把填空横线显示成可见的 ＿＿＿，避免 .blank 在行内塌陷 */
+const stemText = (s) => esc(String(s ?? '')).replace(/_{3,}/g, '<span class="stem-blank"></span>');
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtClock = (sec) => {
   sec = Math.max(0, Math.round(sec));
@@ -216,14 +218,17 @@ function applyServerProfile(data) {
   if (data.wrongbook && typeof data.wrongbook === 'object') {
     // 合并：服务端为准，但保留「离线期间」本地独有的错题
     const local = state.wrong || {};
+    const stamp = (x) => String(x?.lastAt || x?.at || '');
     const merged = { ...data.wrongbook };
     for (const [qid, item] of Object.entries(local)) {
-      if (!merged[qid] || String(item.at || '') > String(merged[qid].at || '')) merged[qid] = item;
+      if (!merged[qid] || stamp(item) > stamp(merged[qid])) merged[qid] = item;
     }
     state.wrong = merged;
     LS.set('dx.wrong', state.wrong);
   }
   if (data.stats) state.profile = data.stats;
+  // 错题本是本地/服务端合并结果，重算一次保证「未掌握/已掌握」计数一致
+  refreshLocalProfile();
 }
 
 /* ======================================================================
@@ -254,7 +259,8 @@ function computeStats(attempts = [], wrong = {}) {
     attempts: attempts.length,
     accuracy: total ? round1((correct / total) * 100) : 0,
     bestScore: round1(best),
-    wrongCount: Object.keys(wrong || {}).length,
+    wrongCount: Object.values(wrong || {}).filter((w) => !w?.mastered).length,
+    masteredCount: Object.values(wrong || {}).filter((w) => w?.mastered).length,
     seen: seenCount,
     bySubject,
   };
@@ -271,20 +277,41 @@ function updateWrongLocal(attempt) {
   const now = new Date().toISOString();
   for (const ans of attempt.answers || []) {
     if (ans.skipped) continue;
+    const prev = state.wrong[ans.qid];
     if (ans.correct) {
-      delete state.wrong[ans.qid];
+      if (prev) state.wrong[ans.qid] = { ...prev, mastered: true, masteredAt: now, lastAt: now };
     } else {
-      const prev = state.wrong[ans.qid];
       state.wrong[ans.qid] = {
         qid: ans.qid,
         code: attempt.subject,
-        at: now,
+        at: prev?.at || now,
+        lastAt: now,
         count: (prev?.count || 0) + 1,
         chosen: ans.chosen,
+        mastered: false,
       };
     }
   }
   LS.set('dx.wrong', state.wrong);
+}
+
+async function syncWrongItem(qid, { mastered, remove } = {}) {
+  if (!state.online) return;
+  try {
+    const res = await fetch(`${Api.base}/api/wrongbook`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ uid: state.uid, qid, mastered: Boolean(mastered), remove: Boolean(remove) }),
+    });
+    const data = await res.json();
+    if (data?.wrongbook) {
+      state.wrong = data.wrongbook;
+      LS.set('dx.wrong', state.wrong);
+      updateChrome();
+    }
+  } catch {
+    /* 离线时忽略，本地状态已更新 */
+  }
 }
 
 function persistLocal() {
@@ -522,7 +549,7 @@ function route() {
 }
 
 function updateChrome() {
-  const wrongCount = Object.keys(state.wrong || {}).length;
+  const wrongCount = Object.values(state.wrong || {}).filter((w) => !w?.mastered).length;
   const badge = $('#nav-wrong-count');
   if (badge) {
     badge.textContent = wrongCount > 99 ? '99+' : String(wrongCount);
@@ -994,7 +1021,7 @@ function renderPlayStage() {
     body = `<div class="fill-row">${Array.from({ length: Math.max(1, q.blanks || 1) })
       .map((_, i) => {
         let cls = 'fill-input';
-        if (feedback) cls += perBlank[i] ? ' correct' : ' wrong';
+        if (feedback && !ans?.skipped) cls += perBlank[i] ? ' correct' : ' wrong';
         return `<div class="fill-item">
           <span class="tag">${multiBlanks ? `第${i + 1}空` : '答案'}</span>
           <input class="${cls}" data-fill="${i}" value="${esc(values[i] || '')}" placeholder="输入答案…"
@@ -1086,7 +1113,7 @@ function renderActions(q, ans, feedback) {
         <span class="spacer"></span>
         ${q.type === 'fill' ? '<button class="btn" id="act-check">确认答案</button>' : ''}
         <button class="btn dark sm" id="act-finish">结束并结算</button>`;
-      $('#act-skip')?.addEventListener('click', () => nextQuestion(true));
+      $('#act-skip')?.addEventListener('click', () => skipQuestion(q));
       $('#act-check')?.addEventListener('click', () => submitFill(q));
       $('#act-finish')?.addEventListener('click', finishLoop);
     } else {
@@ -1182,19 +1209,20 @@ function renderFeedback(q, ans) {
   const extra = $('#play-extra');
   if (!extra) return;
   const good = ans.correct;
+  const skipped = Boolean(ans.skipped);
   extra.innerHTML = `
-  <div class="feedback ${good ? 'good' : 'bad'}">
+  <div class="feedback ${skipped ? 'skipped' : good ? 'good' : 'bad'}">
     <div class="fb-head">
-      <span class="fb-mark">${good ? '✓' : '✗'}</span>
-      ${good ? '答对了！' : '答错了'}
+      <span class="fb-mark">${skipped ? '»' : good ? '✓' : '✗'}</span>
+      ${skipped ? '已跳过 · 看答案' : good ? '答对了！' : '答错了'}
     </div>
     <div class="fb-answer">正确答案：<b>${esc(answerTextOf(q))}</b>${
-      !good && q.type !== 'single' ? `<br>你的答案：${esc(chosenTextOf(q, ans.chosen))}` : ''
+      !good && !skipped && q.type !== 'single' ? `<br>你的答案：${esc(chosenTextOf(q, ans.chosen))}` : ''
     }</div>
     ${q.explain ? `<div class="fb-explain">${richText(q.explain)}</div>` : ''}
     ${q.note ? `<div class="fb-note">📌 勘误：${richText(q.note)}</div>` : ''}
     ${
-      !good && q.type === 'fill'
+      !good && !skipped && q.type === 'fill'
         ? `<div class="self-judge">写的答案和参考答案不一致？<button class="btn ghost sm" id="self-judge">判我对</button></div>`
         : ''
     }
@@ -1206,8 +1234,7 @@ function renderFeedback(q, ans) {
     state.session.correctCount += 1;
     state.session.streak += 1;
     state.session.maxStreak = Math.max(state.session.maxStreak, state.session.streak);
-    delete state.wrong[q.id];
-    LS.set('dx.wrong', state.wrong);
+    updateWrong(q, ans.chosen, true);
     saveSession();
     renderPlayStage();
     toast('已按自评判为正确');
@@ -1215,26 +1242,38 @@ function renderFeedback(q, ans) {
 }
 
 function updateWrong(q, chosen, correct) {
-  if (correct) delete state.wrong[q.id];
-  else {
-    const prev = state.wrong[q.id];
+  const now = new Date().toISOString();
+  const prev = state.wrong[q.id];
+  if (correct) {
+    // 曾经错过、这次做对：标记为已掌握，但保留在错题本里
+    if (prev) state.wrong[q.id] = { ...prev, mastered: true, masteredAt: now, lastAt: now };
+  } else {
     state.wrong[q.id] = {
       qid: q.id,
       code: q.id.split('-')[0],
-      at: new Date().toISOString(),
+      at: prev?.at || now,
+      lastAt: now,
       count: (prev?.count || 0) + 1,
       chosen,
+      mastered: false,
     };
   }
   LS.set('dx.wrong', state.wrong);
 }
 
+function skipQuestion(q) {
+  const s = state.session;
+  if (!s || !q) return;
+  /* 跳过 = 直接揭示答案，本题按「未掌握」计入结算 */
+  s.answers[q.id] = { type: q.type, chosen: null, correct: false, skipped: true };
+  s.skippedCount = (s.skippedCount || 0) + 1;
+  saveSession();
+  renderPlayStage();
+}
+
 function nextQuestion(skip = false) {
   const s = state.session;
   if (!s) return;
-  if (skip && s.mode === 'loop') {
-    /* 跳过不计分 */
-  }
   s.index += 1;
   if (s.index >= s.ids.length) {
     if (s.mode === 'paper') {
@@ -1352,13 +1391,13 @@ async function exitPlay() {
 async function finishLoop() {
   const s = state.session;
   if (!s) return;
-  if (!s.answeredCount) {
+  if (!s.answeredCount && !s.skippedCount) {
     toast('还没作答，先做一题吧');
     return;
   }
   const ok = await confirmModal({
     title: '结束本轮并结算？',
-    desc: `已作答 ${s.answeredCount} 题，正确 ${s.correctCount} 题。结算后会写入战绩与错题本。`,
+    desc: `已作答 ${s.answeredCount} 题，正确 ${s.correctCount} 题${s.skippedCount ? `，跳过 ${s.skippedCount} 题` : ''}。结算后会写入战绩与错题本。`,
     okText: '结算',
   });
   if (!ok) return;
@@ -1399,6 +1438,11 @@ async function submitSession() {
       const a = s.answers[q.id];
       if (!a) {
         if (isLoop) continue;
+        skipped += 1;
+        answers.push({ qid: q.id, type: q.type, chosen: null, correct: false, skipped: true });
+        continue;
+      }
+      if (a.skipped) {
         skipped += 1;
         answers.push({ qid: q.id, type: q.type, chosen: null, correct: false, skipped: true });
         continue;
@@ -1558,7 +1602,7 @@ function renderResult() {
           <span>${richText(q.stem)}</span>
         </div>
         <div class="review-body">
-          你的答案：<span class="mine">${esc(a.skipped ? '（未作答）' : chosenTextOf(q, a.chosen))}</span><br>
+          你的答案：<span class="mine">${esc(a.skipped ? '（跳过看答案）' : chosenTextOf(q, a.chosen))}</span><br>
           正确答案：<span class="ans">${esc(answerTextOf(q))}</span>
           ${q.explain ? `<div class="exp">${richText(q.explain)}</div>` : ''}
           ${q.note ? `<div class="exp" style="color:#9a6a00">📌 勘误：${richText(q.note)}</div>` : ''}
@@ -1639,26 +1683,40 @@ function renderResult() {
 function wrongEntries() {
   return Object.values(state.wrong || {})
     .filter((w) => state.qmap.has(w.qid))
-    .sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    .sort(
+      (a, b) =>
+        Number(Boolean(a.mastered)) - Number(Boolean(b.mastered)) ||
+        String(b.lastAt || b.at || '').localeCompare(String(a.lastAt || a.at || ''))
+    );
 }
 
 function renderWrong() {
   const view = $('#view-wrong');
   const entries = wrongEntries();
+  const unmastered = entries.filter((w) => !w.mastered);
+  const mastered = entries.filter((w) => w.mastered);
+
   const list = entries
     .map((w) => {
       const q = state.qmap.get(w.qid);
       if (!q) return '';
-      return `<details class="wrong-item">
+      return `<details class="wrong-item ${w.mastered ? 'mastered' : ''}">
         <summary>
-          <span class="w-stem">${richText(q.stem)}</span>
-          <span class="w-meta">${esc(q.id)}<br>错 ${w.count} 次</span>
+          <span class="w-stem">${stemText(q.stem)}</span>
+          <span class="w-meta">
+            <span class="w-badge ${w.mastered ? 'ok' : 'bad'}">${w.mastered ? '已掌握' : '未掌握'}</span>
+            <br>错 ${w.count} 次
+          </span>
         </summary>
         <div class="w-body">
           你的答案：<span style="color:#d61f45;font-weight:900">${esc(chosenTextOf(q, w.chosen))}</span><br>
           正确答案：<span style="color:#0b8f68;font-weight:900">${esc(answerTextOf(q))}</span>
           ${q.explain ? `<div style="margin-top:6px;color:#6b5b85">${richText(q.explain)}</div>` : ''}
           ${q.note ? `<div style="margin-top:6px;color:#9a6a00">📌 ${richText(q.note)}</div>` : ''}
+          <div class="w-actions">
+            <button class="btn ghost sm" data-unmaster="${esc(q.id)}">标记为未掌握</button>
+            <button class="btn ghost sm" data-remove="${esc(q.id)}">移出错题本</button>
+          </div>
         </div>
       </details>`;
     })
@@ -1667,19 +1725,58 @@ function renderWrong() {
   view.innerHTML = `
   <div class="section-head" style="margin-top:4px">
     <h2>错题本</h2>
-    <span class="hint">共 ${entries.length} 题 · 答对后自动移除</span>
+    <span class="hint">共 ${entries.length} 题 · 未掌握 ${unmastered.length} · 已掌握 ${mastered.length} · 重做答对后自动标记为已掌握</span>
     <span class="spacer"></span>
-    <button class="btn violet sm" id="wrong-retry" ${entries.length ? '' : 'disabled'}>重练错题</button>
     <button class="btn ghost sm" id="wrong-clear" ${entries.length ? '' : 'disabled'}>清空</button>
   </div>
+
+  <div class="panel wrong-tools">
+    <div class="wrong-tools-copy">
+      <b>重练错题</b>
+      <span>选一个范围，按顺序把这批题再过一遍；答对即标记为已掌握，仍留在本子里。</span>
+    </div>
+    <div class="wrong-tools-btns">
+      <button class="btn violet sm" id="retry-unmastered" ${unmastered.length ? '' : 'disabled'}>重练未掌握 <b>${unmastered.length}</b></button>
+      <button class="btn ghost sm" id="retry-mastered" ${mastered.length ? '' : 'disabled'}>重练已掌握 <b>${mastered.length}</b></button>
+      <button class="btn ghost sm" id="retry-all" ${entries.length ? '' : 'disabled'}>重练所有 <b>${entries.length}</b></button>
+    </div>
+  </div>
+
   ${list || '<div class="empty">错题本是空的。去刷题吧，做错的题会自动收进来。</div>'}`;
 
-  $('#wrong-retry')?.addEventListener('click', () => {
-    const codes = [...new Set(entries.map((e) => e.code).filter(Boolean))];
+  const retry = (list, tag) => {
+    if (!list.length) return;
+    const codes = [...new Set(list.map((e) => e.code).filter(Boolean))];
     const code = codes.length === 1 ? codes[0] : 'mix';
-    const picked = entries.slice(0, 30).map((e) => state.qmap.get(e.qid)).filter(Boolean);
-    startWrongPaper(picked, code);
-  });
+    const picked = list.slice(0, 30).map((e) => state.qmap.get(e.qid)).filter(Boolean);
+    startWrongPaper(picked, code, tag);
+  };
+
+  $('#retry-unmastered')?.addEventListener('click', () => retry(unmastered, '未掌握'));
+  $('#retry-mastered')?.addEventListener('click', () => retry(mastered, '已掌握'));
+  $('#retry-all')?.addEventListener('click', () => retry(entries, '全部'));
+
+  view.querySelectorAll('[data-unmaster]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.unmaster;
+      const w = state.wrong[id];
+      if (w) state.wrong[id] = { ...w, mastered: false };
+      LS.set('dx.wrong', state.wrong);
+      updateChrome();
+      renderWrong();
+      syncWrongItem(id, { mastered: false });
+    })
+  );
+
+  view.querySelectorAll('[data-remove]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      delete state.wrong[btn.dataset.remove];
+      LS.set('dx.wrong', state.wrong);
+      updateChrome();
+      renderWrong();
+      syncWrongItem(btn.dataset.remove, { remove: true });
+    })
+  );
 
   $('#wrong-clear')?.addEventListener('click', async () => {
     const ok = await confirmModal({ title: '清空错题本？', desc: '只清空错题记录，不影响历史战绩。', okText: '清空', danger: true });
@@ -1698,14 +1795,14 @@ function renderWrong() {
   });
 }
 
-function startWrongPaper(questions, code) {
+function startWrongPaper(questions, code, tag = '') {
   if (!questions.length) return;
   const counts = countBy(questions);
   state.session = {
     id: newId(),
     mode: 'paper',
     code,
-    title: `${subjectName(code)} · 错题重练`,
+    title: `${subjectName(code)} · 错题重练${tag ? `（${tag}）` : ''}`,
     ids: questions.map((q) => q.id),
     index: 0,
     cycle: 0,
@@ -1727,6 +1824,176 @@ function startWrongPaper(questions, code) {
 /* ======================================================================
  *  战绩
  * ==================================================================== */
+const qbankView = { subject: 'all', status: 'all', keyword: '' };
+const QBANK_STATUS = {
+  all: '全部',
+  new: '未做',
+  correct: '答对',
+  wrong: '答错',
+};
+
+/** 汇总每道题的最新作答状态：新→旧扫描 attempts，错题本兜底 */
+function questionStatusMap() {
+  const map = new Map();
+  const attempts = (state.attempts || [])
+    .slice()
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  for (const a of attempts) {
+    for (const ans of a.answers || []) {
+      if (!ans || !ans.qid || ans.skipped) continue;
+      const prev = map.get(ans.qid);
+      if (prev && prev.at && prev.at >= String(a.createdAt || '')) continue;
+      map.set(ans.qid, { status: ans.correct ? 'correct' : 'wrong', at: a.createdAt || '', chosen: ans.chosen });
+    }
+  }
+  for (const w of Object.values(state.wrong || {})) {
+    if (!w || !w.qid) continue;
+    const prev = map.get(w.qid);
+    if (!prev || !prev.at || String(w.at || '') >= prev.at) {
+      map.set(w.qid, { status: 'wrong', at: w.at || '', chosen: w.chosen });
+    }
+  }
+  return map;
+}
+
+function allQuestions() {
+  const out = [];
+  for (const m of state.index?.subjects || []) {
+    const subj = state.bank?.subjects?.[m.code];
+    if (!subj) continue;
+    for (const q of subj.questions || []) out.push({ q, subj });
+  }
+  return out;
+}
+
+function renderQbank() {
+  const host = $('#qbank');
+  if (!host) return;
+  try {
+    paintQbank(host);
+  } catch (err) {
+    host.innerHTML = `<div class="empty">题目总览加载失败：${esc(String(err && err.message ? err.message : err))}</div>`;
+    console.error('[qbank]', err);
+  }
+}
+
+function paintQbank(host) {
+  const statusMap = questionStatusMap();
+  const all = allQuestions();
+  const kw = qbankView.keyword.trim().toLowerCase();
+
+  const countBy = { all: all.length, new: 0, correct: 0, wrong: 0 };
+  for (const { q } of all) {
+    const st = statusMap.get(q.id)?.status || 'new';
+    countBy[st] += 1;
+  }
+
+  const filtered = all.filter(({ q, subj }) => {
+    if (qbankView.subject !== 'all' && subj.code !== qbankView.subject) return false;
+    const st = statusMap.get(q.id)?.status || 'new';
+    if (qbankView.status !== 'all' && st !== qbankView.status) return false;
+    if (kw && !`${q.stem} ${q.options ? Object.values(q.options).join(' ') : ''}`.toLowerCase().includes(kw)) return false;
+    return true;
+  });
+
+  const subjectFilters = [
+    `<button class="${qbankView.subject === 'all' ? 'active' : ''}" data-qs="all">全部 <b>${all.length}</b></button>`,
+    ...(state.index?.subjects || []).map(
+      (m) => `<button class="${qbankView.subject === m.code ? 'active' : ''}" data-qs="${m.code}">${m.code} <b>${m.total}</b></button>`
+    ),
+  ].join('');
+
+  const statusFilters = Object.entries(QBANK_STATUS)
+    .map(
+      ([k, label]) =>
+        `<button class="${qbankView.status === k ? 'active' : ''}" data-qst="${k}">${label} <b>${countBy[k] ?? 0}</b></button>`
+    )
+    .join('');
+
+  const rows = filtered
+    .map(({ q }) => {
+      const st = statusMap.get(q.id)?.status || 'new';
+      const label = st === 'correct' ? '答对' : st === 'wrong' ? '答错' : '未做';
+      return `<button class="qbank-row ${st}" data-qid="${esc(q.id)}">
+        <span class="qbank-type t-${q.type}">${{ fill: '填空', single: '选择', judge: '判断' }[q.type] || q.type}</span>
+        <span class="qbank-stem">${stemText(q.stem)}</span>
+        <span class="qbank-badge ${st}">${label}</span>
+      </button>`;
+    })
+    .join('');
+
+  host.innerHTML = `
+    <div class="qbank-head">
+      <div>
+        <span class="hint qbank-count">共 ${all.length} 题 · 已练 ${countBy.correct + countBy.wrong} 题 · 点任意题看答案与解析</span>
+      </div>
+      <label class="qbank-search">
+        <span>🔍</span>
+        <input id="qbank-kw" type="search" placeholder="搜索题干或选项关键词" value="${esc(qbankView.keyword)}" />
+      </label>
+    </div>
+    <div class="qbank-filters">
+      <div class="seg">${subjectFilters}</div>
+      <div class="seg">${statusFilters}</div>
+    </div>
+    <div class="qbank-list">${rows || '<div class="empty">没有符合条件的题目。</div>'}</div>`;
+
+  host.querySelectorAll('[data-qs]').forEach((b) =>
+    b.addEventListener('click', () => {
+      qbankView.subject = b.dataset.qs;
+      renderQbank();
+    })
+  );
+  host.querySelectorAll('[data-qst]').forEach((b) =>
+    b.addEventListener('click', () => {
+      qbankView.status = b.dataset.qst;
+      renderQbank();
+    })
+  );
+  host.querySelectorAll('[data-qid]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const q = state.qmap.get(b.dataset.qid);
+      if (q) openQuestionCard(q, statusMap.get(q.id));
+    })
+  );
+  const kwInput = $('#qbank-kw');
+  if (kwInput) {
+    let timer = 0;
+    kwInput.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        qbankView.keyword = kwInput.value;
+        renderQbank();
+      }, 220);
+    });
+  }
+}
+
+function openQuestionCard(q, st) {
+  const your = st?.chosen;
+  const opts = q.options
+    ? Object.entries(q.options)
+        .map(
+          ([k, v]) => `<li class="${q.answer === k ? 'ok' : ''}">
+            <b>${k}</b><span>${richText(v)}</span>${q.answer === k ? '<em>正确答案</em>' : ''}
+          </li>`
+        )
+        .join('')
+    : '';
+  openModal(`
+    <h3 class="modal-title">${q.no ? `原题号 ${esc(String(q.no))} · ` : ''}${esc(q.id)}</h3>
+    <div class="modal-desc">${stemText(q.stem)}</div>
+    ${opts ? `<ul class="qbank-options">${opts}</ul>` : ''}
+    <div class="qbank-answer">
+      <div>正确答案：<b class="ok">${esc(answerTextOf(q))}</b></div>
+      ${your !== undefined && your !== null ? `<div>你的答案：<b class="bad">${esc(chosenTextOf(q, your))}</b></div>` : ''}
+    </div>
+    ${q.explain ? `<div class="qbank-explain">${richText(q.explain)}</div>` : ''}
+    ${q.note ? `<div class="qbank-note">📌 ${richText(q.note)}</div>` : ''}
+    <div class="modal-actions"><button class="btn ghost" data-x="0">关闭</button></div>
+  `);
+}
+
 function renderStats() {
   const view = $('#view-stats');
   const p = state.profile || computeStats(state.attempts, state.wrong);
@@ -1772,7 +2039,8 @@ function renderStats() {
         <div class="stat-pill"><b>${p.attempts}</b><span>总卷数</span></div>
         <div class="stat-pill"><b>${p.accuracy.toFixed(1)}%</b><span>总正确率</span></div>
         <div class="stat-pill"><b>${p.bestScore.toFixed(1)}%</b><span>最高分</span></div>
-        <div class="stat-pill"><b>${p.wrongCount}</b><span>错题</span></div>
+        <div class="stat-pill"><b>${p.wrongCount}</b><span>未掌握错题</span></div>
+        <div class="stat-pill"><b>${p.masteredCount || 0}</b><span>已掌握错题</span></div>
       </div>
     </div>
     <div class="hero-side">
@@ -1791,6 +2059,9 @@ function renderStats() {
   <div class="section-head"><h2>分科进度</h2></div>
   <div class="subject-grid">${subjects}</div>
 
+  <div class="section-head"><h2>题目总览</h2><span class="hint">按科目 / 作答状态筛选，或用关键词搜索</span></div>
+  <div id="qbank" class="panel qbank"></div>
+
   <div class="section-head"><h2>练习记录</h2><span class="hint">最近 40 卷 · 点击查看结算</span></div>
   ${
     rows
@@ -1808,6 +2079,8 @@ function renderStats() {
       location.hash = '#/result';
     });
   });
+
+  renderQbank();
 }
 
 /* ======================================================================

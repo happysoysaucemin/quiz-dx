@@ -286,6 +286,29 @@ async function handleApi(req, res, pathname, query) {
     });
   }
 
+  if (pathname === '/api/wrongbook' && method === 'POST') {
+    const body = await readBody(req);
+    const id = await resolveIdentity(req, body.uid);
+    const uid = id.uid;
+    if (!uid) return sendJSON(res, 400, { ok: false, error: '缺少 uid' });
+    const qid = String(body.qid || '').slice(0, 80);
+    if (!qid) return sendJSON(res, 400, { ok: false, error: '缺少 qid' });
+    const user = store.find(uid);
+    if (!user) return sendJSON(res, 404, { ok: false, error: '用户不存在' });
+    user.wrong ||= {};
+    if (body.remove) delete user.wrong[qid];
+    else if (user.wrong[qid]) {
+      user.wrong[qid] = {
+        ...user.wrong[qid],
+        mastered: Boolean(body.mastered),
+        masteredAt: body.mastered ? new Date().toISOString() : user.wrong[qid].masteredAt,
+      };
+    }
+    user.updatedAt = new Date().toISOString();
+    await store.commit();
+    return sendJSON(res, 200, { ok: true, wrongbook: user.wrong, stats: computeStats(user) });
+  }
+
   if (pathname === '/api/wrongbook' && method === 'DELETE') {
     const id = await resolveIdentity(req, query.get('uid'));
     const uid = id.uid;

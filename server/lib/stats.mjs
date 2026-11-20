@@ -118,28 +118,31 @@ export function computeStats(user) {
     attempts: attempts.length,
     accuracy: totalQuestions ? round((correct / totalQuestions) * 100) : 0,
     bestScore: round(best),
-    wrongCount: Object.keys(user.wrong || {}).length,
+    wrongCount: Object.values(user.wrong || {}).filter((w) => !w?.mastered).length,
+    masteredCount: Object.values(user.wrong || {}).filter((w) => w?.mastered).length,
     seen: seenCount,
     bySubject,
   };
 }
 
-/** 根据一次答卷更新错题本：答对移除，答错收录（未作答不收录） */
+/** 根据一次答卷更新错题本：答错收录、答对标记已掌握（保留记录，不删除） */
 export function updateWrongbook(user, attempt) {
   const at = attempt.createdAt;
   user.wrong ||= {};
   for (const ans of attempt.answers) {
     if (ans.skipped) continue;
+    const prev = user.wrong[ans.qid];
     if (ans.correct) {
-      delete user.wrong[ans.qid];
+      if (prev) user.wrong[ans.qid] = { ...prev, mastered: true, masteredAt: at, lastAt: at };
     } else {
-      const prev = user.wrong[ans.qid];
       user.wrong[ans.qid] = {
         qid: ans.qid,
         code: attempt.subject,
-        at,
+        at: prev?.at || at,
+        lastAt: at,
         count: (prev?.count || 0) + 1,
         chosen: ans.chosen,
+        mastered: false,
       };
     }
   }
