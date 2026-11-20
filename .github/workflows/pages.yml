@@ -1,0 +1,43 @@
+# 可选：把纯静态前端 + 题库发布到 GitHub Pages。
+# 使用前：Settings → Pages → Source 选择 "GitHub Actions"；
+# 并把 web/js/config.js 的 apiBase 改成你的后端地址（Pages 不跑 Node）。
+name: Deploy static frontend
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare site
+        run: |
+          mkdir -p dist
+          cp -r web/. dist/
+          cp -r bank dist/bank
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

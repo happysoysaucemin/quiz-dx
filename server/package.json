@@ -1,0 +1,14 @@
+{
+  "name": "quiz-dx-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "刷题 DX 后端：成绩、错题本、B20 刷题力（零依赖）",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
