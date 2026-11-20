@@ -37,8 +37,12 @@ async function call(path, { method = 'GET', body, headers = {}, timeout = 6000 }
 /** 用题库猫账号登录；返回 { ok, token, user } 或 { ok:false, status, error } */
 export async function ssoLogin(username, password, ip) {
   const headers = {};
-  /* 透传真实客户端 IP，让对方的「每 IP 15 分钟 20 次」限流按用户而不是按我们的代理计 */
-  if (ip && /^[0-9a-fA-F:.]+$/.test(ip)) headers['x-forwarded-for'] = ip;
+  /* 透传真实客户端 IP，让对方的「每 IP 15 分钟 20 次」限流按用户而不是按我们的代理计。
+     对方优先读 X-Real-IP，且只认离自己最近的一跳，所以两个头都只放一个值。 */
+  if (ip && /^[0-9a-fA-F:.]+$/.test(ip)) {
+    headers['x-real-ip'] = ip;
+    headers['x-forwarded-for'] = ip;
+  }
   const { status, ok, data } = await call('/api/login', {
     method: 'POST',
     body: { username, password },

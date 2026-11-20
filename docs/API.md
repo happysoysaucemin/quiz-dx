@@ -4,7 +4,7 @@ Base URL：`http://<host>:8787/api`（部署时按实际域名替换）
 
 - 所有请求/响应均为 JSON。
 - 跨域：服务端默认 `Access-Control-Allow-Origin: *`，可用 `CORS_ORIGIN` 收紧。
-- 身份：没有登录态，所有接口用 `uid` 区分用户。uid 由前端生成（`crypto.randomUUID()`）并存在 `localStorage`。
+- 身份：默认用 `uid` 区分用户（前端生成、存在 `localStorage`）；也可以带 `Authorization: Bearer <题库猫 token>` 借用 tikumao.top 的登录态，此时服务端把该用户映射成 `hx:<题库猫用户 id>`，请求里的 `uid` 参数会被忽略。
 - 幂等：同一 `attempt.id` 重复提交只会记一次。
 
 ## 数据结构
@@ -51,6 +51,32 @@ Base URL：`http://<host>:8787/api`（部署时按实际域名替换）
 
 ---
 
+## POST /api/auth/login
+
+用题库猫（tikumao.top）账号登录。服务端把账号密码转发给 `https://tikumao.top/api/login`，只把 token 和用户信息回传给前端；**不保存密码，也不保存对方 JWT 密钥**。
+
+```bash
+curl -X POST https://quiz.1551114.xyz/api/auth/login -H 'content-type: application/json' -d '{"username":"demo","password":"******"}'
+```
+
+```json
+{
+  "ok": true,
+  "token": "<题库猫 JWT>",
+  "user": { "uid": "hx:42", "id": 42, "username": "demo", "nickname": "演示猫" }
+}
+```
+
+之后在其它接口带上 `Authorization: Bearer <token>`，服务端会调用题库猫的 `GET /api/me` 校验（结果缓存 60 秒），有效则使用 `hx:<id>` 作为用户身份；token 失效时退回请求里的 `uid`。登录失败返回 `401`，被对方限流返回 `429`。
+
+## GET /api/auth/me
+
+校验当前 token 并返回用户。
+
+```bash
+curl https://quiz.1551114.xyz/api/auth/me -H "Authorization: Bearer <token>"
+```
+
 ## GET /api/health
 
 ```bash
@@ -71,6 +97,8 @@ curl http://localhost:8787/api/health
 ## GET /api/profile?uid=…
 
 返回用户、统计、最近 60 条答卷、错题本。用户不存在时返回空档案，不写盘。
+
+带 `Authorization: Bearer <token>` 时按登录身份返回，响应的 `viewer` 字段会说明身份来源（`{"sso":true,"hxId":42}`）。
 
 ```bash
 curl "http://localhost:8787/api/profile?uid=abc123"

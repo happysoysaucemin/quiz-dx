@@ -116,10 +116,16 @@ function bearerToken(req) {
   return m ? m[1].trim() : '';
 }
 
-/** 真实客户端 IP（nginx 会带 X-Forwarded-For） */
+/** 真实客户端 IP（nginx 覆盖写 X-Real-IP；只取 XFF 最后一段，避免被伪造的前缀当成不同用户） */
 function clientIp(req) {
-  const xf = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return xf || String(req.socket.remoteAddress || '');
+  const real = String(req.headers['x-real-ip'] || '').trim();
+  if (real) return real;
+  const hops = String(req.headers['x-forwarded-for'] || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (hops.length) return hops[hops.length - 1];
+  return String(req.socket.remoteAddress || '');
 }
 
 /**

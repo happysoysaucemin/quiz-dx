@@ -171,14 +171,17 @@ node tools/check.mjs           # 校验题库字段与前后端评分一致性
 | POST | `/api/attempts` | `{uid,nickname,attempt}` 交卷（幂等，按 attempt.id 去重） |
 | DELETE | `/api/wrongbook?uid=` | 清空错题本 |
 | GET | `/api/leaderboard` | B20 排行（前 20） |
+| POST | `/api/auth/login` | `{username,password}` 用题库猫账号登录，返回 token（不落库） |
+| GET | `/api/auth/me` | `Authorization: Bearer <token>` 校验登录态 |
 
 详见 [docs/API.md](docs/API.md)。
 
 ## 数据与安全
 
 - 服务端把数据写在 `server/data/db.json`，原子替换写；默认最多保留每个用户 1000 条答卷。
-- 没有账号密码体系：`uid` 是浏览器生成并保存在 `localStorage` 的随机 ID，**知道 uid 就能读写对应数据**。适合个人/小范围使用；公网部署请自行加反向代理鉴权或限制访问。
-- 前端 `localStorage` 键：`dx.uid`、`dx.nick`、`dx.attempts`、`dx.wrong`、`dx.session`、`dx.lastResult`。
+- 默认没有账号密码体系：`uid` 是浏览器生成并保存在 `localStorage` 的随机 ID，**知道 uid 就能读写对应数据**。适合个人/小范围使用；公网部署请自行加反向代理鉴权或限制访问。
+- 可选登录：点右上角「学员」可用 **题库猫（tikumao.top）账号** 登录。后端只做代理（`POST /api/login`）并用 `GET /api/me` 校验 token（缓存 60 秒），**不保存密码、不复制对方 JWT 密钥、不修改 tikumao.top**；登录后身份为 `hx:<题库猫用户 id>`，退出后回到本机匿名身份。
+- 前端 `localStorage` 键：`dx.uid`、`dx.nick`、`dx.attempts`、`dx.wrong`、`dx.session`、`dx.lastResult`、`dx.hxToken`（登录后）。
 
 ## 线上部署（server7）
 
