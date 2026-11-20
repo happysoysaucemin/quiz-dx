@@ -3,12 +3,15 @@
 > 全量无限循环 + 随机组卷刷卷，maimai DX 风格的结算界面。
 > 题库来自《四科模拟试卷 · 纠错解析与挖空版》，只收**客观题**，按科目拆分，已按勘误表修正答案。
 
-**在线体验（GitHub Pages，纯静态本地模式）**：<https://happysoysaucemin.github.io/quiz-dx/>
+**在线体验**：
+
+- 一体站（前端 + API 同源）：<https://quiz.tikumao.top/>
+- GitHub Pages（静态前端，自动连线上 API）：<https://happysoysaucemin.github.io/quiz-dx/>
 
 - 前端仓库：<https://github.com/happysoysaucemin/quiz-dx>
 - 题库仓库：<https://github.com/happysoysaucemin/quiz-dx-bank>
 
-> Pages 上没有 Node 后端，页面会自动切到本地模式（成绩、错题本都存在浏览器 localStorage）；想连自己的后端，把 `web/js/config.js` 的 `apiBase` 指向服务端再重新部署，或者给页面加 `?server=1` 强制开启。
+> Pages 上没有 Node 后端，页面会自动把 `apiBase` 指向线上 API（quiz.tikumao.top）；断网或后端不可用时会退回本地模式（成绩、错题本存在浏览器 localStorage）。想强制纯本地用 `?noserver=1`。
 
 ![首页](docs/screenshots/home.png)
 
@@ -177,12 +180,41 @@ node tools/check.mjs           # 校验题库字段与前后端评分一致性
 - 没有账号密码体系：`uid` 是浏览器生成并保存在 `localStorage` 的随机 ID，**知道 uid 就能读写对应数据**。适合个人/小范围使用；公网部署请自行加反向代理鉴权或限制访问。
 - 前端 `localStorage` 键：`dx.uid`、`dx.nick`、`dx.attempts`、`dx.wrong`、`dx.session`、`dx.lastResult`。
 
+## 线上部署（server7）
+
+当前生产环境：<https://quiz.tikumao.top/>（Ubuntu 22.04 + nginx + systemd + Let's Encrypt）。
+
+| 项 | 位置 / 值 |
+| --- | --- |
+| 代码目录 | `/opt/quiz-dx`（独立目录，与同机 huaxue 项目互不影响） |
+| 数据目录 | `/var/lib/quiz-dx/db.json`（服务以 `www-data` 运行，只可写这里） |
+| systemd | `quiz-dx-api.service`（`/etc/systemd/system/`）+ `/etc/quiz-dx/env` |
+| 监听 | `127.0.0.1:8787`（只对本机 nginx 开放） |
+| nginx | `/etc/nginx/conf.d/quiz-dx.conf`：`/` 静态、`/api/` 反代、`/bank/` 题库 |
+| 证书 | `certbot --nginx -d quiz.tikumao.top`，自动续期 |
+
+常用运维命令：
+
+```bash
+systemctl status quiz-dx-api      # 状态
+systemctl restart quiz-dx-api     # 重启
+journalctl -u quiz-dx-api -f      # 日志
+nginx -t && systemctl reload nginx
+```
+
+更新代码（在服务器上）：
+
+```bash
+cd /opt/quiz-dx && git pull --ff-only
+systemctl restart quiz-dx-api      # 只在 server/ 改动时需要
+```
+
 ## 部署到 GitHub Pages（可选）
 
 `.github/workflows/pages.yml` 会把 `web/` + `bank/` 一起发布到 Pages。首次使用：
 
 1. 把仓库推到 GitHub，Settings → Pages → Source 选 GitHub Actions；
-2. 在 `web/js/config.js` 里把 `apiBase` 改成你的后端地址（Pages 只托管静态文件）；
+2. `web/js/config.js` 里 `API_ORIGIN` 指向后端地址（`*.github.io` 会自动使用它）；
 3. push 到 `main` 即可。
 
 题库也可以单独拆成一个仓库（已发布：[happysoysaucemin/quiz-dx-bank](https://github.com/happysoysaucemin/quiz-dx-bank)）：直接把 `bank/` 里的文件推到仓库根目录，`bankBase` 指向 `https://cdn.jsdelivr.net/gh/happysoysaucemin/quiz-dx-bank@main/`。

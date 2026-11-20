@@ -282,18 +282,22 @@ function subjectName(code) {
   return state.bank?.subjects?.[code]?.name || code;
 }
 
-function startLoop(code, order) {
+function startLoop(code, order, types) {
   const codes = code === 'mix' ? state.index.subjects.map((s) => s.code) : [code];
-  let questions = codes.flatMap((c) => state.bank.subjects[c].questions);
-  if (order === 'rand') questions = shuffle(questions);
+  const allowed = types || { fill: true, single: true, judge: true };
+  let questions = codes
+    .flatMap((c) => state.bank.subjects[c].questions)
+    .filter((q) => allowed[q.type]);
+  if (order !== 'seq') questions = shuffle(questions);
   if (!questions.length) {
-    toast('这个科目还没有题目');
+    toast('这个科目里没有选中的题型');
     return;
   }
   state.session = {
     id: newId(),
     mode: 'loop',
     code,
+    order,
     title: `${subjectName(code)} · 全量循环`,
     ids: questions.map((q) => q.id),
     index: 0,
@@ -680,7 +684,8 @@ function renderSetup(params) {
   const setup = {
     mode,
     code,
-    order: prev.order || 'seq',
+    order: prev.order || 'rand',
+    types: prev.types || { fill: true, single: true, judge: true },
     limitMin: prev.limitMin ?? 20,
     counts: prev.code === code && prev.counts ? prev.counts : defaultCounts(code),
   };
@@ -690,6 +695,17 @@ function renderSetup(params) {
   const avail = availableCounts(code);
   const totalSelected = setup.counts.fill + setup.counts.single + setup.counts.judge;
   const diff = difficultyOf(setup.counts);
+
+  // 循环模式的题型范围（全量题库按类型过滤）
+  const loopCodes = code === 'mix' ? subjects.map((m) => m.code) : [code];
+  const loopCounts = { fill: 0, single: 0, judge: 0 };
+  for (const c of loopCodes) {
+    for (const q of state.bank.subjects[c].questions) {
+      if (setup.types[q.type] !== false) loopCounts[q.type] += 1;
+    }
+  }
+  const loopTotal = loopCounts.fill + loopCounts.single + loopCounts.judge;
+  const loopDiff = difficultyOf(loopCounts);
 
   const subjectOpts = [
     ...subjects.map((m) => ({ code: m.code, name: m.name, short: m.short, count: m.total, hue: SUBJECT_HUES[m.code] })),
@@ -741,10 +757,27 @@ function renderSetup(params) {
       ${
         mode === 'loop'
           ? `<div class="field">
+              <div class="field-label">题型范围 <span class="label-note">可多选 · 选中的题型全量进入循环</span></div>
+              <div class="seg type-seg">
+                ${[
+                  ['fill', '填空题'],
+                  ['single', '单选题'],
+                  ['judge', '判断题'],
+                ]
+                  .map(
+                    ([t, label]) => `
+                  <button data-type="${t}" class="${setup.types[t] ? 'active' : ''}" ${avail[t] ? '' : 'disabled'}>
+                    ${label}<small>${avail[t]}</small>
+                  </button>`,
+                  )
+                  .join('')}
+              </div>
+            </div>
+            <div class="field">
               <div class="field-label">出题顺序</div>
               <div class="seg">
-                <button data-order="seq" class="${setup.order !== 'rand' ? 'active' : ''}">按题库原序</button>
-                <button data-order="rand" class="${setup.order === 'rand' ? 'active' : ''}">随机打乱</button>
+                <button data-order="rand" class="${setup.order !== 'seq' ? 'active' : ''}">随机打乱</button>
+                <button data-order="seq" class="${setup.order === 'seq' ? 'active' : ''}">按题库原序</button>
               </div>
             </div>`
           : `<div class="field">
@@ -762,14 +795,14 @@ function renderSetup(params) {
       }
 
       <div class="summary-bar">
-        <span>本轮 <b>${mode === 'loop' ? state.index.subjects.reduce((n, m) => n + (code === 'mix' || m.code === code ? m.total : 0), 0) : totalSelected}</b> 题</span>
-        <span>试卷定数 <b>${diff}</b></span>
+        <span>本轮 <b>${mode === 'loop' ? loopTotal : totalSelected}</b> 题</span>
+        <span>试卷定数 <b>${mode === 'loop' ? loopDiff : diff}</b></span>
         ${mode === 'paper' ? `<span>限时 <b>${setup.limitMin ? setup.limitMin + ' 分钟' : '不限'}</b></span>` : '<span>可随时结束并结算</span>'}
       </div>
 
       <div class="setup-actions">
         <a class="btn ghost" href="#/home">取消</a>
-        <button class="btn violet lg" id="start-btn" ${mode === 'paper' && totalSelected === 0 ? 'disabled' : ''}>开始${mode === 'loop' ? '循环' : '答题'} →</button>
+        <button class="btn violet lg" id="start-btn" ${(mode === 'loop' ? loopTotal : totalSelected) === 0 ? 'disabled' : ''}>开始${mode === 'loop' ? '循环' : '答题'} →</button>
       </div>
     </div>
   </div>`;
@@ -786,6 +819,16 @@ function renderSetup(params) {
   view.querySelectorAll('.subject-opt').forEach((btn) =>
     btn.addEventListener('click', () => {
       state.setup = { ...setup, code: btn.dataset.code, counts: defaultCounts(btn.dataset.code) };
+      rerender();
+    }),
+  );
+
+  view.querySelectorAll('[data-type]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const t = btn.dataset.type;
+      const next = { ...setup.types, [t]: !setup.types[t] };
+      if (!next.fill && !next.single && !next.judge) return toast('至少保留一种题型');
+      state.setup = { ...setup, types: next };
       rerender();
     }),
   );
@@ -823,7 +866,7 @@ function renderSetup(params) {
   );
 
   $('#start-btn')?.addEventListener('click', () => {
-    if (mode === 'loop') startLoop(code, setup.order);
+    if (mode === 'loop') startLoop(code, setup.order, setup.types);
     else startPaper(code, setup.counts, setup.limitMin);
   });
 }
@@ -1173,6 +1216,7 @@ function nextQuestion(skip = false) {
     s.cycle += 1;
     s.answers = {};
     s.drafts = {};
+    if (s.order === 'rand') s.ids = shuffle(s.ids);
     toast(`第 ${s.cycle + 1} 轮开始，继续加油`);
   }
   saveSession();
