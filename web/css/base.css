@@ -361,6 +361,8 @@ button { cursor: pointer; }
   font-weight: 600;
 }
 
+.hero-compact { grid-template-columns: minmax(0, 1fr) 340px; }
+
 .hero-stats {
   display: flex;
   flex-wrap: wrap;
@@ -1169,6 +1171,7 @@ button { cursor: pointer; }
 /* 响应式 */
 @media (max-width: 860px) {
   .hero { grid-template-columns: 1fr; }
+  .hero-compact { grid-template-columns: 1fr; }
   .hero-side { flex-direction: row; flex-wrap: wrap; }
   .rating-card { flex: 1 1 260px; }
   .mode-tiles { flex: 1 1 260px; }

@@ -189,7 +189,13 @@ function applyServerProfile(data) {
     LS.set('dx.attempts', state.attempts);
   }
   if (data.wrongbook && typeof data.wrongbook === 'object') {
-    state.wrong = data.wrongbook;
+    // 合并：服务端为准，但保留「离线期间」本地独有的错题
+    const local = state.wrong || {};
+    const merged = { ...data.wrongbook };
+    for (const [qid, item] of Object.entries(local)) {
+      if (!merged[qid] || String(item.at || '') > String(merged[qid].at || '')) merged[qid] = item;
+    }
+    state.wrong = merged;
     LS.set('dx.wrong', state.wrong);
   }
   if (data.stats) state.profile = data.stats;
@@ -989,6 +995,11 @@ function renderPlayStage() {
   if (firstInput && !feedback && window.matchMedia('(pointer:fine)').matches) {
     firstInput.focus();
   }
+  // 翻页后收起答题卡，避免格子状态过期
+  if (extra && extra.dataset.sheet === '1') {
+    extra.dataset.sheet = '0';
+    extra.innerHTML = '';
+  }
 }
 
 function renderActions(q, ans, feedback) {
@@ -1678,7 +1689,7 @@ function renderStats() {
     .join('');
 
   view.innerHTML = `
-  <div class="hero" style="grid-template-columns:1fr 340px">
+  <div class="hero hero-compact">
     <div class="hero-copy">
       <span class="eyebrow">MY RECORD</span>
       <h1 style="font-size:clamp(34px,5vw,56px)">战绩 <em>总览</em></h1>
