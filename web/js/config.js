@@ -5,7 +5,8 @@
  *  - 同源部署：apiBase 留空，题库 bankBase 留空（默认读取同目录下的 ../bank 或 ./bank）。
  *  - 分离部署：把 apiBase 改成后端地址，例如 "https://quiz-api.example.com"。
  *  - 题库托管：bankBase 可以指向任意静态地址（GitHub Pages / jsDelivr / 对象存储），
- *    例如 "https://cdn.jsdelivr.net/gh/<user>/<repo>@main/bank/"。
+ *    例如 "https://cdn.jsdelivr.net/gh/happysoysaucemin/quiz-dx-bank@main/"。
+ *    题库仓库：https://github.com/happysoysaucemin/quiz-dx-bank
  *    注意必须以 / 结尾，且目录内要有 index.json 和 13006.json 等文件。
  */
 window.APP_CONFIG = {

@@ -67,7 +67,7 @@ CORS_ORIGIN=https://your-frontend.example.com node server/server.mjs
 ```
 
 > `bankBase` 也可以是完整 URL，例如
-> `https://cdn.jsdelivr.net/gh/<user>/<repo>@main/bank/`，前端会直接跨域拉取题库（后端静态服务已带 CORS，GitHub Pages/jsDelivr 本身也支持跨域）。
+> `https://cdn.jsdelivr.net/gh/happysoysaucemin/quiz-dx-bank@main/`，前端会直接跨域拉取题库（后端静态服务已带 CORS，GitHub Pages/jsDelivr 本身也支持跨域）。
 
 ### 只部署后端（纯 API）
 
@@ -178,7 +178,7 @@ node tools/check.mjs           # 校验题库字段与前后端评分一致性
 2. 在 `web/js/config.js` 里把 `apiBase` 改成你的后端地址（Pages 只托管静态文件）；
 3. push 到 `main` 即可。
 
-题库也可以单独拆成一个仓库：直接把 `bank/` 目录推上去，`bankBase` 指向 `https://cdn.jsdelivr.net/gh/<user>/<repo>@main/bank/`。
+题库也可以单独拆成一个仓库（已发布：[happysoysaucemin/quiz-dx-bank](https://github.com/happysoysaucemin/quiz-dx-bank)）：直接把 `bank/` 里的文件推到仓库根目录，`bankBase` 指向 `https://cdn.jsdelivr.net/gh/happysoysaucemin/quiz-dx-bank@main/`。
 
 ## 说明
 
