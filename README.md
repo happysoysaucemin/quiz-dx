@@ -5,13 +5,13 @@
 
 **在线体验**：
 
-- 一体站（前端 + API 同源）：<https://quiz.tikumao.top/>
+- 一体站（前端 + API 同源）：<https://quiz.1551114.xyz/>
 - GitHub Pages（静态前端，自动连线上 API）：<https://happysoysaucemin.github.io/quiz-dx/>
 
 - 前端仓库：<https://github.com/happysoysaucemin/quiz-dx>
 - 题库仓库：<https://github.com/happysoysaucemin/quiz-dx-bank>
 
-> Pages 上没有 Node 后端，页面会自动把 `apiBase` 指向线上 API（quiz.tikumao.top）；断网或后端不可用时会退回本地模式（成绩、错题本存在浏览器 localStorage）。想强制纯本地用 `?noserver=1`。
+> Pages 上没有 Node 后端，页面会自动把 `apiBase` 指向线上 API（quiz.1551114.xyz）；断网或后端不可用时会退回本地模式（成绩、错题本存在浏览器 localStorage）。想强制纯本地用 `?noserver=1`。
 
 ![首页](docs/screenshots/home.png)
 
@@ -182,7 +182,7 @@ node tools/check.mjs           # 校验题库字段与前后端评分一致性
 
 ## 线上部署（server7）
 
-当前生产环境：<https://quiz.tikumao.top/>（Ubuntu 22.04 + nginx + systemd + Let's Encrypt）。
+当前生产环境：<https://quiz.1551114.xyz/>（Ubuntu 22.04 + nginx + systemd + Let's Encrypt）。
 
 | 项 | 位置 / 值 |
 | --- | --- |
@@ -191,7 +191,7 @@ node tools/check.mjs           # 校验题库字段与前后端评分一致性
 | systemd | `quiz-dx-api.service`（`/etc/systemd/system/`）+ `/etc/quiz-dx/env` |
 | 监听 | `127.0.0.1:8787`（只对本机 nginx 开放） |
 | nginx | `/etc/nginx/conf.d/quiz-dx.conf`：`/` 静态、`/api/` 反代、`/bank/` 题库 |
-| 证书 | `certbot --nginx -d quiz.tikumao.top`，自动续期 |
+| 证书 | `certbot --nginx -d quiz.1551114.xyz`，自动续期 |
 
 常用运维命令：
 
