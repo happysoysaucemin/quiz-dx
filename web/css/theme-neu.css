@@ -1095,3 +1095,18 @@ body {
 .mascot-wrap .mascot-img {
   border-radius: 50%;
 }
+
+/* 手机端（≤640px）：结算页防横向溢出 —— 单列网格允许收缩，试卷条换行，数字自适应 */
+@media (max-width: 640px) {
+  .result-body { grid-template-columns: minmax(0, 1fr); }
+  .result-main { min-width: 0; }
+  .song-card { flex-wrap: wrap; row-gap: 6px; }
+  .song-info { flex: 1 1 100%; min-width: 0; }
+  .song-title { white-space: normal; }
+  .song-lv { margin-left: auto; }
+  .achv-score { font-size: clamp(38px, 13vw, 56px); }
+  .rank-word { font-size: clamp(64px, 19vw, 104px); }
+  .badges { flex-wrap: wrap; }
+  .review-head { flex-wrap: wrap; }
+  .review-body { margin-left: 0; }
+}
