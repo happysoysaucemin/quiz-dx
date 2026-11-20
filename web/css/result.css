@@ -228,7 +228,7 @@
 .badge-pill.green { color: #0b8f68; }
 
 /* 右栏 */
-.result-side { display: flex; flex-direction: column; gap: 12px; }
+.result-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 
 .mascot-wrap {
   position: relative;
@@ -239,7 +239,8 @@
   place-items: center;
 }
 
-.mascot-wrap svg { width: 100%; height: 100%; filter: drop-shadow(0 12px 20px rgba(90, 60, 150, 0.22)); }
+.mascot-wrap svg,
+.mascot-wrap .mascot-img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 12px 20px rgba(90, 60, 150, 0.22)); }
 
 .stat-panel {
   display: grid;
@@ -315,8 +316,10 @@
 
 @media (max-width: 860px) {
   .result-body { grid-template-columns: 1fr; }
-  .result-side { order: -1; }
-  .mascot-wrap { width: 170px; }
-  .stat-panel { width: 100%; }
+  /* 手机端：先把这一卷的成绩（科目/定数/达成率/评级）放在最上面，看板娘与统计随后 */
+  .result-main { order: 1; }
+  .result-side { order: 2; }
+  .mascot-wrap { width: 168px; }
+  .stat-panel { width: 100%; min-width: 0; }
   .counters { grid-row: auto; }
 }

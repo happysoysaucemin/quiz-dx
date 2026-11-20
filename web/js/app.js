@@ -91,6 +91,7 @@ const state = {
   profile: null,
   session: null,
   lastResult: null,
+  autoNext: LS.get('dx.autonext') !== false,
   setup: null,
   timerId: null,
   saving: false,
@@ -523,7 +524,12 @@ function route() {
     showView('play');
     setNavActive('home');
     renderPlay();
-  } else if (path === '/result') {
+  } else if (path === '/result' || path.startsWith('/result/')) {
+    const deepId = path.startsWith('/result/') ? decodeURIComponent(path.slice('/result/'.length)) : '';
+    if (deepId) {
+      const rec = (state.attempts || []).find((a) => a && a.id === deepId);
+      if (rec) state.lastResult = { attempt: rec, stats: state.profile, delta: 0, history: true };
+    }
     if (!state.lastResult) state.lastResult = LS.get('dx.lastResult', null);
     if (!state.lastResult?.attempt) {
       location.hash = '#/stats';
@@ -851,6 +857,15 @@ function renderSetup(params) {
             </div>`
       }
 
+      <div class="field">
+        <div class="field-label">答题节奏</div>
+        <label class="switch-row">
+          <input type="checkbox" id="auto-next-toggle" ${state.autoNext ? 'checked' : ''} />
+          <span class="switch-ui" aria-hidden="true"></span>
+          <span class="switch-text">选择 / 判断答完自动进下一题</span>
+        </label>
+      </div>
+
       <div class="summary-bar">
         <span>本轮 <b>${mode === 'loop' ? loopTotal : totalSelected}</b> 题</span>
         <span>试卷定数 <b>${mode === 'loop' ? loopDiff : diff}</b></span>
@@ -903,6 +918,12 @@ function renderSetup(params) {
       rerender();
     }),
   );
+
+  view.querySelector('#auto-next-toggle')?.addEventListener('change', (e) => {
+    state.autoNext = e.target.checked;
+    LS.set('dx.autonext', state.autoNext);
+    toast(state.autoNext ? '答完自动进下一题：开' : '答完自动进下一题：关');
+  });
 
   view.querySelectorAll('[data-step]').forEach((btn) =>
     btn.addEventListener('click', () => {
@@ -1151,12 +1172,12 @@ function pickSingle(q, key) {
     const correct = grade(q, key);
     recordLoopAnswer(q, key, correct);
     renderPlayStage();
-    setTimeout(() => $('#act-next')?.focus(), 30);
+    scheduleAutoNext(1600);
   } else {
     s.answers[q.id] = { chosen: key, correct: grade(q, key) };
     saveSession();
     renderPlayStage();
-    setTimeout(() => $('#act-next')?.focus(), 30);
+    scheduleAutoNext(450);
   }
 }
 
@@ -1167,12 +1188,12 @@ function pickJudge(q, value) {
     const correct = grade(q, value);
     recordLoopAnswer(q, value, correct);
     renderPlayStage();
-    setTimeout(() => $('#act-next')?.focus(), 30);
+    scheduleAutoNext(1600);
   } else {
     s.answers[q.id] = { chosen: value, correct: grade(q, value) };
     saveSession();
     renderPlayStage();
-    setTimeout(() => $('#act-next')?.focus(), 30);
+    scheduleAutoNext(450);
   }
 }
 
@@ -1187,6 +1208,7 @@ function submitFill(q) {
   const result = checkFill(q, values);
   recordLoopAnswer(q, values, result.correct, result.perBlank);
   renderPlayStage();
+  scheduleAutoNext(2000);
 }
 
 function recordLoopAnswer(q, chosen, correct, perBlank) {
@@ -1269,9 +1291,45 @@ function skipQuestion(q) {
   s.skippedCount = (s.skippedCount || 0) + 1;
   saveSession();
   renderPlayStage();
+  scheduleAutoNext(2600);
+}
+
+let autoNextTimer = null;
+
+function cancelAutoNext() {
+  if (autoNextTimer) {
+    clearTimeout(autoNextTimer);
+    autoNextTimer = null;
+  }
+}
+
+/* 答完自动进下一题：loop 留时间看反馈，paper 快速翻页；末题不自动交卷 */
+function scheduleAutoNext(delay) {
+  cancelAutoNext();
+  const s = state.session;
+  if (!s || state.autoNext === false) return;
+  if (location.hash !== '#/play') return;
+  const at = s.index;
+  const last0 = at >= s.ids.length - 1;
+  if (s.mode === 'loop') {
+    autoNextTimer = setTimeout(() => {
+      autoNextTimer = null;
+      const cur = state.session;
+      if (!cur || cur.index !== at || location.hash !== '#/play') return;
+      nextQuestion();
+    }, delay);
+  } else if (!last0) {
+    autoNextTimer = setTimeout(() => {
+      autoNextTimer = null;
+      const cur = state.session;
+      if (!cur || cur.index !== at || location.hash !== '#/play') return;
+      nextQuestion();
+    }, delay);
+  }
 }
 
 function nextQuestion(skip = false) {
+  cancelAutoNext();
   const s = state.session;
   if (!s) return;
   s.index += 1;
@@ -1293,6 +1351,7 @@ function nextQuestion(skip = false) {
 }
 
 function prevQuestion() {
+  cancelAutoNext();
   const s = state.session;
   if (!s || s.index === 0) return;
   s.index -= 1;
@@ -1301,6 +1360,7 @@ function prevQuestion() {
 }
 
 function openAnswerSheet() {
+  cancelAutoNext();
   const s = state.session;
   const extra = $('#play-extra');
   if (!extra) return;
@@ -1389,6 +1449,7 @@ async function exitPlay() {
 }
 
 async function finishLoop() {
+  cancelAutoNext();
   const s = state.session;
   if (!s) return;
   if (!s.answeredCount && !s.skippedCount) {
@@ -1405,6 +1466,7 @@ async function finishLoop() {
 }
 
 async function submitPaper() {
+  cancelAutoNext();
   const s = state.session;
   if (!s) return;
   const answered = Object.keys(s.answers).length;
@@ -1544,36 +1606,15 @@ function rankWordHtml(key) {
   </div>`;
 }
 
-const MASCOT_SVG = `
-<svg viewBox="0 0 240 240" role="img" aria-label="刷题 DX 吉祥物">
-  <defs>
-    <linearGradient id="mg-body" x1="0" y1="0" x2="0.4" y2="1">
-      <stop offset="0" stop-color="#6ea8ff"/><stop offset="1" stop-color="#2f6bff"/>
-    </linearGradient>
-    <linearGradient id="mg-belly" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#f4fbff"/><stop offset="1" stop-color="#cfe6ff"/>
-    </linearGradient>
-    <linearGradient id="mg-ring" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#ffffff"/><stop offset="0.5" stop-color="#ffe28a"/><stop offset="1" stop-color="#ff9ec7"/>
-    </linearGradient>
-  </defs>
-  <circle cx="120" cy="118" r="104" fill="none" stroke="url(#mg-ring)" stroke-width="10" stroke-dasharray="20 11" opacity="0.95" transform="rotate(-14 120 118)"/>
-  <circle cx="120" cy="118" r="88" fill="#ffffff" opacity="0.55"/>
-  <path d="M64 132c0-34 24-56 58-56 33 0 56 21 56 52 0 11-3 20-8 28l24-14c2 11 1 22-3 32-9 22-34 35-67 35-32 0-55-14-62-38-4-12-3-26 2-39z" fill="url(#mg-body)" stroke="#ffffff" stroke-width="7" stroke-linejoin="round"/>
-  <path d="M92 156c8-13 23-20 41-20 17 0 30 6 38 18 5 8 4 17-4 22-10 6-26 9-41 9-16 0-30-3-38-10-6-5-4-11 4-19z" fill="url(#mg-belly)" opacity="0.95"/>
-  <path d="M108 94c0-9 8-16 17-16s16 7 16 15c0 9-7 16-16 16s-17-6-17-15z" fill="#1b2b55"/>
-  <circle cx="130" cy="89" r="5.5" fill="#ffffff"/>
-  <path d="M92 132c7-6 16-8 24-5" stroke="#1b2b55" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.35"/>
-  <circle cx="88" cy="146" r="9" fill="#ff9ec7" opacity="0.65"/>
-  <path d="M120 62c0-12 9-20 20-20 3 0 6 1 8 2" stroke="#ffffff" stroke-width="7" stroke-linecap="round" fill="none" opacity="0.9"/>
-  <circle cx="163" cy="47" r="9" fill="#ffffff" opacity="0.85"/>
-  <circle cx="183" cy="66" r="6" fill="#ffffff" opacity="0.7"/>
-  <circle cx="188" cy="40" r="4" fill="#ffe28a"/>
-  <g transform="translate(63 196) rotate(-6)">
-    <rect x="0" y="0" width="72" height="30" rx="15" fill="#33244a"/>
-    <text x="36" y="21" text-anchor="middle" font-family="sans-serif" font-size="17" font-weight="900" fill="#ffd166">DX</text>
-  </g>
-</svg>`;
+/* 结算看板娘：取自 nekowhale-stickers（作者 可以叫我云大人 / kiriyuki.com） */
+function mascotHtml(score, perfect) {
+  const src = perfect || score >= 100 ? 'perfect'
+    : score >= 90 ? 'great'
+    : score >= 60 ? 'ok'
+    : 'low';
+  const label = { perfect: '满分印章', great: '开心探头', ok: '认真思考', low: '委屈自闭' }[src];
+  return `<div class="mascot-wrap"><img class="mascot-img" src="img/mascot/${src}.webp" alt="大肥鱼 · ${label}" loading="lazy" decoding="async"></div>`;
+}
 
 function renderResult() {
   const view = $('#view-result');
@@ -1645,7 +1686,7 @@ function renderResult() {
         </div>
 
         <div class="result-side">
-          <div class="mascot-wrap">${MASCOT_SVG}</div>
+          ${mascotHtml(score, perfect)}
           <div class="stat-panel">
             <div class="counters">
               <div class="counter ac"><b>AC 正确</b><span>${attempt.correct}</span></div>
