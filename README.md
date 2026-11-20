@@ -3,6 +3,13 @@
 > 全量无限循环 + 随机组卷刷卷，maimai DX 风格的结算界面。
 > 题库来自《四科模拟试卷 · 纠错解析与挖空版》，只收**客观题**，按科目拆分，已按勘误表修正答案。
 
+**在线体验（GitHub Pages，纯静态本地模式）**：<https://happysoysaucemin.github.io/quiz-dx/>
+
+- 前端仓库：<https://github.com/happysoysaucemin/quiz-dx>
+- 题库仓库：<https://github.com/happysoysaucemin/quiz-dx-bank>
+
+> Pages 上没有 Node 后端，页面会自动切到本地模式（成绩、错题本都存在浏览器 localStorage）；想连自己的后端，把 `web/js/config.js` 的 `apiBase` 指向服务端再重新部署，或者给页面加 `?server=1` 强制开启。
+
 ![首页](docs/screenshots/home.png)
 
 ## 特性

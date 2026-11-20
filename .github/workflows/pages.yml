@@ -1,6 +1,7 @@
-# 可选：把纯静态前端 + 题库发布到 GitHub Pages。
-# 使用前：Settings → Pages → Source 选择 "GitHub Actions"；
-# 并把 web/js/config.js 的 apiBase 改成你的后端地址（Pages 不跑 Node）。
+# 把纯静态前端 + 题库发布到 GitHub Pages。
+# 站点：https://happysoysaucemin.github.io/quiz-dx/
+# Pages 上没有 Node 后端，前端会自动切到本地模式（apiBase 留空即可）。
+# 想在 Pages 上连后端：把 web/js/config.js 的 apiBase 改成服务端地址后重新部署。
 name: Deploy static frontend
 
 on:
