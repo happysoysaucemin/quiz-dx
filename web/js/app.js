@@ -1,4 +1,4 @@
-import { Api } from './api.js';
+import { Api, Auth } from './api.js';
 import {
   TYPE_LABEL,
   RANK_TABLE,
@@ -82,6 +82,7 @@ const state = {
     return id;
   })(),
   nickname: LS.get('dx.nick', '学员'),
+  ssoUser: null,
   online: false,
   attempts: LS.get('dx.attempts', []),
   wrong: LS.get('dx.wrong', {}),
@@ -148,6 +149,29 @@ function setConn(kind, text) {
   if (label) label.textContent = text;
 }
 
+/**
+ * 同步题库猫账号身份：token 有效就把 uid 切成 hx:<id>，失效就清除并退回匿名 uid。
+ * 返回是否已登录。
+ */
+async function syncIdentity() {
+  if (!Auth.loggedIn) {
+    state.ssoUser = null;
+    return false;
+  }
+  try {
+    const { user } = await Api.authMe();
+    state.ssoUser = user;
+    state.uid = user.uid || `hx:${user.id}`;
+    state.nickname = user.nickname || user.username || '学员';
+    LS.set('dx.nick', state.nickname);
+    return true;
+  } catch {
+    Auth.clear();
+    state.ssoUser = null;
+    return false;
+  }
+}
+
 async function connectServer() {
   if (!Api.enabled) {
     state.online = false;
@@ -158,6 +182,7 @@ async function connectServer() {
   const locals = state.attempts.slice();
   try {
     await Api.health();
+    await syncIdentity();
     const first = await Api.profile(state.uid);
     const serverIds = new Set((first.attempts || []).map((a) => a.id));
     const missing = locals.filter((a) => !serverIds.has(a.id));
@@ -505,6 +530,11 @@ function updateChrome() {
   }
   const nick = $('#nick-text');
   if (nick) nick.textContent = state.nickname;
+  const nickBtn = $('#nick-btn');
+  if (nickBtn) {
+    nickBtn.classList.toggle('logged-in', !!state.ssoUser);
+    nickBtn.title = state.ssoUser ? `已登录题库猫账号：${state.ssoUser.username}` : '点击登录题库猫账号 / 改昵称';
+  }
   if (state.online) setConn('online', '已连接');
   else setConn('offline', Api.enabled ? '本地模式' : '离线刷题');
 }
@@ -1840,8 +1870,112 @@ function promptModal({ title, desc = '', value = '', placeholder = '' }) {
   });
 }
 
-let toastTimer = null;
-function toast(msg, ms = 2400) {
+/* ======================================================================
+ *  账号（借用题库猫 tikumao.top 的登录鉴权）
+ * ==================================================================== */
+async function openAccountModal() {
+  if (state.ssoUser) {
+    const logout = await confirmModal({
+      title: `已登录：${state.ssoUser.nickname || state.ssoUser.username}`,
+      desc: '成绩和错题本记在题库猫账号名下。退出后会回到本机匿名身份（原匿名成绩仍保留在本机）。',
+      okText: '退出登录',
+      danger: true,
+    });
+    if (!logout) return;
+    Auth.clear();
+    state.ssoUser = null;
+    state.uid = LS.get('dx.uid', '') || newId();
+    LS.set('dx.uid', state.uid);
+    state.nickname = '学员';
+    LS.set('dx.nick', state.nickname);
+    await connectServer();
+    updateChrome();
+    route();
+    toast('已退出登录');
+    return;
+  }
+
+  const { close, root } = openModal(`
+    <h3>登录题库猫账号</h3>
+    <p>使用 <a href="https://tikumao.top/" target="_blank" rel="noopener">题库猫（tikumao.top）</a> 的账号登录，成绩与错题本会记在该账号名下。</p>
+    <input id="lg-user" placeholder="用户名或邮箱" autocomplete="username" />
+    <input id="lg-pass" type="password" placeholder="密码" autocomplete="current-password" />
+    <p class="login-error" id="lg-err"></p>
+    <div class="modal-actions">
+      <button class="btn ghost" data-x="0">取消</button>
+      <button class="btn ghost" data-x="nick">只改本机昵称</button>
+      <button class="btn violet" data-x="1">登录</button>
+    </div>
+    <p class="login-hint">没有账号？先去题库猫注册，再回来登录即可。</p>`);
+
+  const userInput = root.querySelector('#lg-user');
+  const passInput = root.querySelector('#lg-pass');
+  const errBox = root.querySelector('#lg-err');
+  const submitBtn = root.querySelector('[data-x="1"]');
+  userInput?.focus();
+
+  const doLogin = async () => {
+    const username = (userInput?.value || '').trim();
+    const password = passInput?.value || '';
+    if (!username || !password) {
+      errBox.textContent = '请输入账号和密码';
+      return;
+    }
+    submitBtn.disabled = true;
+    submitBtn.textContent = '登录中…';
+    try {
+      const res = await Api.authLogin(username, password);
+      Auth.setToken(res.token);
+      state.ssoUser = res.user;
+      state.uid = res.user.uid;
+      state.nickname = res.user.nickname || res.user.username;
+      LS.set('dx.nick', state.nickname);
+      close();
+      await connectServer();
+      updateChrome();
+      route();
+      toast(`已登录：${state.nickname}`);
+    } catch (err) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '登录';
+      errBox.textContent =
+        err.status === 429
+          ? '尝试过于频繁，请 15 分钟后再试'
+          : err.message === 'server-disabled'
+            ? '当前离线，无法登录'
+            : err.message || '登录失败';
+    }
+  };
+
+  root.querySelector('[data-x="0"]')?.addEventListener('click', close);
+  submitBtn.addEventListener('click', doLogin);
+  passInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doLogin();
+  });
+  root.querySelector('[data-x="nick"]')?.addEventListener('click', async () => {
+    close();
+    const name = await promptModal({
+      title: '改个本机昵称',
+      desc: '昵称只用于显示；登录题库猫账号后会改用账号昵称。',
+      value: state.nickname,
+      placeholder: '例如：夜航鲸',
+    });
+    if (name === null) return;
+    state.nickname = name || '学员';
+    LS.set('dx.nick', state.nickname);
+    updateChrome();
+    if (state.online) {
+      try {
+        await Api.rename(state.uid, state.nickname);
+      } catch {
+        /* 忽略 */
+      }
+    }
+    toast('昵称已更新');
+  });
+}
+
+let toastTimer = null;function toast(msg, ms = 2400) {
   const el = $('#toast');
   if (!el) return;
   el.textContent = msg;
@@ -1880,26 +2014,7 @@ function bindKeyboard() {
  *  顶栏交互
  * ==================================================================== */
 function bindChrome() {
-  $('#nick-btn')?.addEventListener('click', async () => {
-    const name = await promptModal({
-      title: '改个昵称',
-      desc: '昵称只用于显示，成绩按本机身份（uid）归属。',
-      value: state.nickname,
-      placeholder: '例如：夜航鲸',
-    });
-    if (name === null) return;
-    state.nickname = name || '学员';
-    LS.set('dx.nick', state.nickname);
-    updateChrome();
-    if (state.online) {
-      try {
-        await Api.rename(state.uid, state.nickname);
-      } catch {
-        /* 忽略 */
-      }
-    }
-    toast('昵称已更新');
-  });
+  $('#nick-btn')?.addEventListener('click', () => openAccountModal());
 
   $('#conn-chip')?.addEventListener('click', async () => {
     toast(state.online ? '服务端已连接' : '当前为本地模式，成绩保存在浏览器');

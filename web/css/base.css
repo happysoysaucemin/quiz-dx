@@ -1131,6 +1131,24 @@ button { cursor: pointer; }
 }
 .modal input:focus { border-color: var(--violet); }
 
+/* 登录弹窗 */
+.modal .login-error {
+  min-height: 18px;
+  margin: -6px 0 12px;
+  color: #d64567;
+  font-size: 13px;
+  font-weight: 800;
+}
+.modal .login-hint {
+  margin: 14px 0 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.modal .login-hint a,
+.modal p a { color: var(--violet); font-weight: 900; }
+.nick-btn.logged-in { border-color: var(--violet); }
+
 /* Toast */
 .toast {
   position: fixed;

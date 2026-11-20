@@ -14,6 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Store } from './lib/store.mjs';
 import { computeStats, normalizeAttempt, updateWrongbook } from './lib/stats.mjs';
+import { ssoLogin, ssoVerify } from './lib/sso.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -56,7 +57,7 @@ function setCors(res, req) {
   }
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Max-Age', '86400');
 }
 
@@ -108,6 +109,39 @@ function publicUser(user) {
   return { uid: user.uid, nickname: user.nickname, createdAt: user.createdAt };
 }
 
+/** 取 Authorization: Bearer <token> */
+function bearerToken(req) {
+  const raw = String(req.headers.authorization || '');
+  const m = /^Bearer\s+(.+)$/i.exec(raw);
+  return m ? m[1].trim() : '';
+}
+
+/** 真实客户端 IP（nginx 会带 X-Forwarded-For） */
+function clientIp(req) {
+  const xf = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return xf || String(req.socket.remoteAddress || '');
+}
+
+/**
+ * 身份解析：带了有效的题库猫 token 就用 huaxue 账号（uid = hx:<id>），
+ * 否则退回本机匿名 uid（保持原来的免登录体验）。
+ */
+async function resolveIdentity(req, fallbackUid) {
+  const token = bearerToken(req);
+  if (token) {
+    const user = await ssoVerify(token);
+    if (user) {
+      return {
+        uid: `hx:${user.id}`,
+        nickname: String(user.nickname || user.username || '学员'),
+        sso: true,
+        user,
+      };
+    }
+  }
+  return { uid: String(fallbackUid || '').trim(), nickname: '', sso: false, user: null };
+}
+
 /* ------------------------------- API ------------------------------- */
 async function handleApi(req, res, pathname, query) {
   const method = req.method || 'GET';
@@ -129,14 +163,54 @@ async function handleApi(req, res, pathname, query) {
     });
   }
 
+  if (pathname === '/api/auth/login' && method === 'POST') {
+    const body = await readBody(req);
+    const username = String(body.username || '').trim();
+    const password = String(body.password || '');
+    if (!username || !password) {
+      return sendJSON(res, 400, { ok: false, error: '请输入账号和密码' });
+    }
+    const r = await ssoLogin(username, password, clientIp(req));
+    if (!r.ok) return sendJSON(res, r.status || 401, { ok: false, error: r.error || '登录失败' });
+    const u = r.user || {};
+    return sendJSON(res, 200, {
+      ok: true,
+      token: r.token,
+      user: {
+        uid: `hx:${u.id}`,
+        id: u.id,
+        username: u.username || username,
+        nickname: u.nickname || u.username || username,
+      },
+    });
+  }
+
+  if (pathname === '/api/auth/me' && method === 'GET') {
+    const token = bearerToken(req);
+    if (!token) return sendJSON(res, 401, { ok: false, error: '未登录' });
+    const user = await ssoVerify(token);
+    if (!user) return sendJSON(res, 401, { ok: false, error: '登录已过期，请重新登录' });
+    return sendJSON(res, 200, {
+      ok: true,
+      user: {
+        uid: `hx:${user.id}`,
+        id: user.id,
+        username: user.username,
+        nickname: user.nickname || user.username,
+      },
+    });
+  }
+
   if (pathname === '/api/profile' && method === 'GET') {
-    const uid = String(query.get('uid') || '').trim();
+    const id = await resolveIdentity(req, query.get('uid'));
+    const uid = id.uid;
     if (!uid) return sendJSON(res, 400, { ok: false, error: '缺少 uid' });
     const user = store.find(uid);
     if (!user) {
       return sendJSON(res, 200, {
         ok: true,
-        user: { uid, nickname: '学员', createdAt: null },
+        user: { uid, nickname: id.nickname || '学员', createdAt: null },
+        viewer: id.sso ? { sso: true, hxId: id.user.id } : { sso: false },
         stats: computeStats({ attempts: [], wrong: {} }),
         attempts: [],
         wrongbook: {},
@@ -146,6 +220,7 @@ async function handleApi(req, res, pathname, query) {
     return sendJSON(res, 200, {
       ok: true,
       user: publicUser(user),
+      viewer: id.sso ? { sso: true, hxId: id.user.id } : { sso: false },
       stats: computeStats(user),
       attempts,
       wrongbook: user.wrong || {},
@@ -154,10 +229,11 @@ async function handleApi(req, res, pathname, query) {
 
   if (pathname === '/api/profile' && method === 'POST') {
     const body = await readBody(req);
-    const uid = String(body.uid || '').trim();
+    const id = await resolveIdentity(req, body.uid);
+    const uid = id.uid;
     if (!uid) return sendJSON(res, 400, { ok: false, error: '缺少 uid' });
     const user = store.user(uid);
-    user.nickname = cleanNickname(body.nickname, user.nickname);
+    user.nickname = cleanNickname(body.nickname, id.nickname || user.nickname);
     user.updatedAt = new Date().toISOString();
     await store.commit();
     return sendJSON(res, 200, { ok: true, user: publicUser(user) });
@@ -165,10 +241,11 @@ async function handleApi(req, res, pathname, query) {
 
   if (pathname === '/api/attempts' && method === 'POST') {
     const body = await readBody(req);
-    const uid = String(body.uid || '').trim();
+    const id = await resolveIdentity(req, body.uid);
+    const uid = id.uid;
     if (!uid) return sendJSON(res, 400, { ok: false, error: '缺少 uid' });
     const user = store.user(uid);
-    if (body.nickname) user.nickname = cleanNickname(body.nickname, user.nickname);
+    if (body.nickname || id.nickname) user.nickname = cleanNickname(body.nickname, id.nickname || user.nickname);
 
     const attempt = normalizeAttempt(body.attempt, uid);
     const exists = (user.attempts || []).find((a) => a.id === attempt.id);
@@ -204,7 +281,8 @@ async function handleApi(req, res, pathname, query) {
   }
 
   if (pathname === '/api/wrongbook' && method === 'DELETE') {
-    const uid = String(query.get('uid') || '').trim();
+    const id = await resolveIdentity(req, query.get('uid'));
+    const uid = id.uid;
     if (!uid) return sendJSON(res, 400, { ok: false, error: '缺少 uid' });
     const user = store.find(uid);
     if (user) {

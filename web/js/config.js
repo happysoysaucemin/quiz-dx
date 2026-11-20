@@ -13,7 +13,7 @@
  * 想强制纯本地模式用 ?noserver=1，想强制连后端用 ?server=1。
  */
 const params = new URLSearchParams(location.search);
-const isStaticHost = /\.github\.io$/i.test(location.hostname);
+const isLocalDev = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname);
 const isApiHost = /(^|\.)1551114\.xyz$/i.test(location.hostname);
 const forceOff = params.get('noserver') === '1' || params.get('server') === '0';
 
@@ -21,8 +21,8 @@ const forceOff = params.get('noserver') === '1' || params.get('server') === '0';
 const API_ORIGIN = 'https://quiz.1551114.xyz';
 
 window.APP_CONFIG = {
-  // 后端 API 根地址；留空 = 与页面同源（例如由 server 同时托管 web 与 bank）
-  apiBase: isStaticHost || !isApiHost ? API_ORIGIN : '',
+  // 后端 API 根地址；留空 = 与页面同源（本机开发、或由 server 同时托管 web 与 bank）
+  apiBase: isLocalDev || isApiHost ? '' : API_ORIGIN,
 
   // 题库根地址；留空 = 页面同级的 ./bank/
   bankBase: '',
